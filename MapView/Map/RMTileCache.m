@@ -372,51 +372,42 @@
         {
             for (NSUInteger y = yMin; y <= yMax; y++)
             {
-                RMTileCacheDownloadOperation *operation = [[RMTileCacheDownloadOperation alloc] initWithTile:RMTileMake((uint32_t)x, (uint32_t)y, zoom)
-                                                                                                forTileSource:_activeTileSource
-                                                                                                   usingCache:self];
-
-                __weak RMTileCacheDownloadOperation *internalOperation = operation;
                 __weak RMTileCache *weakSelf = self;
-
-                [operation setCompletionBlock:^(void)
-                {
-                    if ( ! [internalOperation isCancelled])
-                    {
+                
+                void(^completion)(NSError *) = ^(NSError *downloadError) {
+                    // Completion block executed on main queue, so the counter increment
+                    // and comparisons are safe.
+                    if (downloadError) {
+                        if ([weakSelf.backgroundCacheDelegate respondsToSelector:@selector(tileCache:didReceiveError:whenCachingTile:)]) {
+                            [weakSelf.backgroundCacheDelegate tileCache:weakSelf
+                                                didReceiveError:downloadError
+                                                whenCachingTile:RMTileMake((uint32_t)x, (uint32_t)y, zoom)];
+                        }
+                    } else {
                         progTile++;
-
-                        if ([_backgroundCacheDelegate respondsToSelector:@selector(tileCache:didBackgroundCacheTile:withIndex:ofTotalTileCount:)])
-                        {
-                            [_backgroundCacheDelegate tileCache:weakSelf
+                        
+                        if ([weakSelf.backgroundCacheDelegate respondsToSelector:@selector(tileCache:didBackgroundCacheTile:withIndex:ofTotalTileCount:)]) {
+                            [weakSelf.backgroundCacheDelegate tileCache:weakSelf
                                          didBackgroundCacheTile:RMTileMake((uint32_t)x, (uint32_t)y, zoom)
                                                       withIndex:progTile
                                                ofTotalTileCount:totalTiles];
                         }
-
-                        if (progTile == totalTiles)
-                        {
-                            dispatch_async(dispatch_get_main_queue(), ^(void)
-                            {
-                                [weakSelf markCachingComplete];
-
-                                if ([_backgroundCacheDelegate respondsToSelector:@selector(tileCacheDidFinishBackgroundCache:)])
-                                {
-                                    [_backgroundCacheDelegate tileCacheDidFinishBackgroundCache:weakSelf];
-                                }
-                            });
+                        
+                        // Safe because completion block is executed on main thread.
+                        if (progTile == totalTiles) {
+                            [weakSelf markCachingComplete];
+                            
+                            if ([weakSelf.backgroundCacheDelegate respondsToSelector:@selector(tileCacheDidFinishBackgroundCache:)]) {
+                                [weakSelf.backgroundCacheDelegate tileCacheDidFinishBackgroundCache:weakSelf];
+                            }
                         }
                     }
-                    else
-                    {
-                        if ([_backgroundCacheDelegate respondsToSelector:@selector(tileCache:didReceiveError:whenCachingTile:)])
-                        {
-                            [_backgroundCacheDelegate tileCache:weakSelf
-                                                didReceiveError:internalOperation.error
-                                                whenCachingTile:RMTileMake((uint32_t)x, (uint32_t)y, zoom)];
-                        }
-                    }
-                }];
-
+                };
+                
+                RMTileCacheDownloadOperation *operation = [[RMTileCacheDownloadOperation alloc] initWithTile:RMTileMake((uint32_t)x, (uint32_t)y, zoom)
+                                                                                                forTileSource:_activeTileSource
+                                                                                                   usingCache:self
+                                                                                                  completion:completion];
                 [_backgroundFetchQueue addOperation:operation];
             }
         }

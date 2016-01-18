@@ -40,7 +40,7 @@
 @implementation RMTileCacheDownloadOperation {
     __weak id <RMTileSource>_source;
     __weak RMTileCache *_cache;
-    void(^_completion)();
+    void(^_completion)(NSError *);
     __weak NSURLSessionDataTask *_task;
     NSURLSession *_session;
     NSURLRequest *_request;
@@ -77,7 +77,7 @@
 - (instancetype)initWithTile:(RMTile)tile
                forTileSource:(id<RMTileSource>)source
                   usingCache:(RMTileCache *)cache
-                  completion:(void (^)(void))completion
+                  completion:(void (^)(NSError *))completion
 {
     NSAssert([source isKindOfClass:[RMAbstractWebMapSource class]], @"only web-based tile sources are supported for downloading");
     
@@ -122,6 +122,12 @@
     self.cancelled = YES;
 }
 
+- (void)completeOperation
+{
+    self.executing = NO;
+    self.finished = YES;
+}
+
 - (NSURLRequest *)createURLRequestForURL:(NSURL *)URL
 {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:URL];
@@ -133,34 +139,38 @@
 
 - (NSURLSessionDataTask *)createDataTaskForRequest:(NSURLRequest *)request
 {
+    NSUInteger retryCount = [(RMAbstractWebMapSource *)_source retryCount];
     NSURLSessionDataTask *task = [_session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        NSInteger statusCode = [(NSHTTPURLResponse *)response statusCode];
-        
-        if (statusCode != 200) {
-            self.error = [NSError errorWithDomain:@"com.mapbox.error.http" code:statusCode userInfo:nil];
-        } else if (!error && data) {
-            [_cache addDiskCachedImageData:data forTile:_tile withCacheKey:[_source uniqueTilecacheKey]];
-        } else if (error) {
-            self.error = error;
+        if (error.code == NSURLErrorCancelled) {
+            [self completeOperation];
         } else {
-            self.error = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorUnknown userInfo:nil];
-        }
-        
-        if (!self.error && data) {
-            if (_completion) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    _completion();
-                });
+            NSError *outError = nil;
+            NSInteger statusCode = [(NSHTTPURLResponse *)response statusCode];
+            
+            if (statusCode != 200) {
+                outError = [NSError errorWithDomain:@"com.mapbox.error.http" code:statusCode userInfo:nil];
+            } else if (error) {
+                outError = error;
+            } else if (!data) {
+                outError = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorUnknown userInfo:nil];
             }
-        }
-        
-        if (self.error && _attempt < [(RMAbstractWebMapSource *)_source retryCount]) {
-            _attempt++;
-            _task = [self createDataTaskForRequest:request];
-            [_task resume];
-        } else {
-            self.executing = NO;
-            self.finished = YES;
+            
+            if (outError && _attempt < retryCount) {
+                _attempt++;
+                _task = [self createDataTaskForRequest:request];
+                [_task resume];
+            } else {
+                if (!outError) {
+                     [_cache addDiskCachedImageData:data forTile:_tile withCacheKey:[_source uniqueTilecacheKey]];
+                }
+                
+                if (_completion) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        _completion(outError);
+                    });
+                }
+                [self completeOperation];
+            }
         }
     }];
     return task;

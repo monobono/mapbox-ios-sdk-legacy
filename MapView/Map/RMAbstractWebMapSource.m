@@ -114,10 +114,12 @@
         [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRequested object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
     });
     
-    RMTileCacheDownloadOperation *operation = [[RMTileCacheDownloadOperation alloc] initWithTile:tile forTileSource:self usingCache:cache completion:^{
-        [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRetrieved object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
-        if (completion) {
-            completion();
+    RMTileCacheDownloadOperation *operation = [[RMTileCacheDownloadOperation alloc] initWithTile:tile forTileSource:self usingCache:cache completion:^(NSError *error){
+        if (!error) {
+            [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRetrieved object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
+            if (completion) {
+                completion();
+            }
         }
     }];
     
