@@ -30,8 +30,6 @@
 #import "RMTileCache.h"
 #import "RMConfiguration.h"
 
-#import <objc/runtime.h>
-
 #import "RMTileCacheDownloadOperation.h"
 
 #define HTTP_404_NOT_FOUND 404
