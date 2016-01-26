@@ -161,7 +161,7 @@
                 [_task resume];
             } else {
                 if (!outError) {
-                     [_cache addDiskCachedImageData:data forTile:_tile withCacheKey:[_source uniqueTilecacheKey]];
+                    [_cache addImage:[UIImage imageWithData:data] forTile:_tile withCacheKey:[_source uniqueTilecacheKey]];
                 }
                 
                 if (_completion) {

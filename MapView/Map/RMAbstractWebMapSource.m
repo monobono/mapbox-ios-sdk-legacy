@@ -49,9 +49,7 @@
     self.retryCount = RMAbstractWebMapSourceDefaultRetryCount;
     self.requestTimeoutSeconds = RMAbstractWebMapSourceDefaultWaitSeconds;
     
-    _downloadQueue = [[NSOperationQueue alloc] init];
-    _downloadQueue.maxConcurrentOperationCount = 6;
-    
+    _downloadQueue = [[NSOperationQueue alloc] init];    
     _enqueuedOperations = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsCopyIn valueOptions:NSPointerFunctionsWeakMemory capacity:64];
 
     return self;
