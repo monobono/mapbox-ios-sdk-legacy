@@ -34,14 +34,26 @@
 
 #define HTTP_404_NOT_FOUND 404
 
+static NSString * KeyForTile(RMTile tile) {
+    return [NSString stringWithFormat:@"%hd|%u|%u", tile.zoom, tile.x, tile.y];
+}
+
+static RMTile TileFromKey(NSString *key) {
+    NSArray *components = [key componentsSeparatedByString:@"|"];
+    short zoom = [components[0] integerValue];
+    uint32_t x = [components[1] integerValue];
+    uint32_t y = [components[2] integerValue];
+    return RMTileMake(x, y, zoom);
+}
+
 @implementation RMAbstractWebMapSource {
-    NSOperationQueue *_downloadQueue;
-    NSMapTable *_enqueuedOperations;
+    NSMapTable *_initiatedTasks;
+    NSURLSession *_URLSession;
 }
 
 @synthesize retryCount, requestTimeoutSeconds;
 
-- (id)init
+- (instancetype)init
 {
     if (!(self = [super init]))
         return nil;
@@ -49,24 +61,34 @@
     self.retryCount = RMAbstractWebMapSourceDefaultRetryCount;
     self.requestTimeoutSeconds = RMAbstractWebMapSourceDefaultWaitSeconds;
     
-    _downloadQueue = [[NSOperationQueue alloc] init];    
-    _enqueuedOperations = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsCopyIn valueOptions:NSPointerFunctionsWeakMemory capacity:64];
-
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    config.HTTPShouldUsePipelining = YES;
+    
+    _URLSession = [NSURLSession sessionWithConfiguration:config];
+    _initiatedTasks = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsCopyIn valueOptions:NSPointerFunctionsWeakMemory capacity:64];
     return self;
 }
 
 - (void)cancelAllDownloads
 {
-    [_downloadQueue cancelAllOperations];
+    NSArray *tasks = nil;
+    
+    @synchronized(_initiatedTasks) {
+        tasks = [_initiatedTasks.objectEnumerator.allObjects copy];
+    }
+    
+    for (NSURLSessionDataTask *task in tasks) {
+        [task cancel];
+    }
 }
 
 - (BOOL)operationExistsForTile:(RMTile)tile
 {
     BOOL exists = NO;
     
-    @synchronized(_enqueuedOperations) {
-        NSOperation *operation = [_enqueuedOperations objectForKey:[RMTileCache tileHash:tile]];
-        exists = operation != NULL && ![operation isCancelled];
+    @synchronized(_initiatedTasks) {
+        NSURLSessionTask *task = [_initiatedTasks objectForKey:KeyForTile(tile)];
+        exists = task != NULL && task.state != NSURLSessionTaskStateCanceling;
     }
     
     return exists;
@@ -74,29 +96,27 @@
 
 - (void)cancelDownloadsIrrelevantToTile:(RMTile)tile visibleMapRect:(RMIntegralRect)mapRect
 {
-    NSArray *operations = nil;
-    
-    @synchronized(_enqueuedOperations) {
-        operations = [_enqueuedOperations.objectEnumerator.allObjects copy];
-    }
-    
-    for (RMTileCacheDownloadOperation *operation in operations) {
-        if ([operation isCancelled]) {
-            continue;
-        }
-        
-        if (operation.tile.zoom != tile.zoom) {
-            [operation cancel];
-        } else if (!RMIntegralRectContainsPoint(mapRect, RMIntegralPointMake(operation.tile.x, operation.tile.y))){
-            [operation cancel];
+    @synchronized(_initiatedTasks) {
+        for (NSString *key in _initiatedTasks.keyEnumerator.allObjects) {
+            NSURLSessionTask *task = [_initiatedTasks objectForKey:key];
+            if (task.state == NSURLSessionTaskStateCanceling) {
+                continue;
+            }
+            
+            RMTile taskTile = TileFromKey(key);
+            if (taskTile.zoom != tile.zoom) {
+                [task cancel];
+            } else if (!RMIntegralRectContainsPoint(mapRect, RMIntegralPointMake(taskTile.x, taskTile.y))){
+                [task cancel];
+            }
         }
     }
 }
 
-- (void)registerOperation:(RMTileCacheDownloadOperation *)operation
+- (void)registerTask:(NSURLSessionDataTask *)task forTile:(RMTile)tile
 {
-    @synchronized(_enqueuedOperations) {
-        [_enqueuedOperations setObject:operation forKey:[RMTileCache tileHash:operation.tile]];
+    @synchronized(_initiatedTasks) {
+        [_initiatedTasks setObject:task forKey:KeyForTile(tile)];
     }
 }
 
@@ -112,17 +132,29 @@
         [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRequested object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
     });
     
-    RMTileCacheDownloadOperation *operation = [[RMTileCacheDownloadOperation alloc] initWithTile:tile forTileSource:self usingCache:cache completion:^(NSError *error){
-        if (!error) {
-            [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRetrieved object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
-            if (completion) {
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[self URLForTile:tile]];
+    request.cachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+    request.timeoutInterval = [self requestTimeoutSeconds];
+    [request setValue:[[RMConfiguration sharedInstance] userAgent] forHTTPHeaderField:@"User-Agent"];
+    
+    NSURLSessionDataTask *task = [_URLSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSInteger statusCode = [(NSHTTPURLResponse *)response statusCode];
+        if (statusCode == 200 && error == nil) {
+            [cache addImage:[UIImage imageWithData:data] forTile:tile withCacheKey:[self uniqueTilecacheKey]];
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+               [[NSNotificationCenter defaultCenter] postNotificationName:RMTileRetrieved object:[NSNumber numberWithUnsignedLongLong:RMTileKey(tile)]];
+            });
+        }
+        
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
                 completion();
-            }
+            });
         }
     }];
-    
-    [_downloadQueue addOperation:operation];
-    [self registerOperation:operation];
+    [task resume];
+    [self registerTask:task forTile:tile];
 }
 
 - (NSURL *)URLForTile:(RMTile)tile
