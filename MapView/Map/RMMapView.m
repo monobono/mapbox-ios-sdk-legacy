@@ -2368,7 +2368,7 @@
     {
         if (tiledLayerView.tileSource == tileSource)
         {
-//            tiledLayerView.layer.contents = nil;
+            tiledLayerView.layer.contents = nil;
             [tiledLayerView setNeedsDisplay];
             break;
         }
