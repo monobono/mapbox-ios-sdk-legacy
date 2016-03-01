@@ -248,11 +248,8 @@
                     //
                     if ([_tileSource isCacheable])
                     {
-                        __block CGRect visibleRect = CGRectZero;
-                        dispatch_sync(dispatch_get_main_queue(), ^{
-                            visibleRect = [_mapView visibleRect];
-                        });
-
+                        CGRect visibleRect = [_mapView visibleRect];
+                        
                         RMIntegralRect integralVisibleRect;
                         integralVisibleRect.origin.x = floor(visibleRect.origin.x / rect.size.width);
                         integralVisibleRect.origin.y = floor(fabs(visibleRect.origin.y / rect.size.height));
