@@ -12,7 +12,7 @@ Pod::Spec.new do |m|
   m.social_media_url = 'https://twitter.com/Mapbox'
 
   m.source = {
-    :git => 'https://github.com/mapbox/mapbox-ios-sdk-legacy.git',
+    :git => 'https://github.com/monobono/mapbox-ios-sdk-legacy.git',
     :tag => m.version.to_s
   }
 
